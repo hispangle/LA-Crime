@@ -1,0 +1,1414 @@
+\documentclass[10pt]{article}
+\usepackage[left=1in,right=1in,top=1in,bottom=1in,twoside=true]{geometry}
+\usepackage{amsmath}
+\usepackage{hyperref}
+
+\begin{document}
+
+\title{Final Report: LA Crime}
+\author{LeGrand Dudley, Angel Miranda-Acost, Rui, Xu, Rajpal Bal, Jacob Eguia}
+\maketitle
+
+\section{Introduction}
+As city populations have expanded in the 21st century, a new-found problem in the 
+United States is the prevalence of crime. Despite efforts in the 20th century to 
+combat crime rates through the "War-on-Drugs" program and prior administrations' "Tough 
+on Crime" approach, a significant amount of crime is present. While many look at 
+specific cities suffering from higher-than-usual amounts of crime (e.g., Chicago), 
+other cities have their fair share of problems that may be consequentially related 
+to the governance of the state and city. 
+
+
+\subsection{What's in the Dataset?}
+This project will attempt to separate the variables found in our dataset, 2010-2019
+LA Crime Data (LAPD) in order to gain a better understanding of the distribution of
+reported crime in LA County. As per the data ranging from a time period of 9 years,
+the LAPD has sorted the data into a numerous amount of categories ranging from:
+
+Time of Occurrence, Date of occurrence, Type of Crime, Crime Code (following LAPD code
+guidelines), Area, Victim Ethnicity, Victim Sex, Victim Age, Description of the Premise, 
+Weapon Description, Status of the Case File, Location, Latitude, and Longitude. 
+
+Each of these variables have about 2 million responses collected, barring cases in
+which a response is missing (e.g., cases where a weapon aren't used wouldn't have a 
+weapon description). As a result of the numerous amount of variables, we can create a 
+few visualizations to better understand the data such as: Who are commonly targeted as
+victims of crime? Which region is frequently targeted? Do specific regions have differing
+frequencies over the years? Are specific ethnicities being targeted in specific regions? 
+When are crimes frequently reported? 
+
+<<echo=FALSE,result='hide',message=FALSE, warning=FALSE>>=
+knitr::opts_chunk$set(echo = FALSE)
+knitr::opts_chunk$set(echo = TRUE)
+options(scipen = 10)
+library(dplyr)
+library(scales)
+library(reshape)
+library(patchwork)
+library(ggplot2)
+library(pracma)
+library(RSQLite)
+library(gridExtra)
+library(ggpubr)
+library(stringr)
+library(knitr)
+library(kableExtra)
+library(grid)
+library(shiny)
+setwd("C:/Users/LeGrand/OneDrive/Documents/For College/STAT 405")
+ccn <- read.csv("ccdu.csv")
+dcon <- dbConnect(SQLite(), dbname = "Crime.db")
+@
+
+<<echo=FALSE,result='hide',message=FALSE, warning=FALSE>>=
+query <-  dbSendQuery(conn = dcon, "
+SELECT DateRptd, victSex
+FROM LA_CrimeData;
+")
+season_extraction <- dbFetch(query)
+dbClearResult(query)
+
+extract_year <- function(vector) {
+  return(as.numeric(substr(vector, 7, 10)))
+}
+
+extract_mos <- function(vector) {
+  return(as.numeric(substr(vector, 1, 2)))
+}
+
+season <- function(number) {
+  season <- 0
+  if (number == 12 | number == 1 | number == 2) {
+    season <- "Winter"
+  }
+  
+  else if ((number > 2) & (number < 6)) {
+    season <- "Spring"
+  }
+  
+  else if ((number > 5) & (number < 9)) {
+    season <- "Summer"
+  }
+  else
+    season <- "Fall"
+  return(season)
+}
+
+extract_season <- function(vector) {
+  return(sapply(vector, FUN = season))
+}
+
+season_extraction <- within(season_extraction, {
+  year <- extract_year(DateRptd)
+})
+
+season_extraction <- within(season_extraction, {
+  month <- extract_mos(DateRptd)
+})
+
+season_extraction <- within(season_extraction, {
+  season <- extract_season(month)
+})
+
+season_extraction_horiz <- season_extraction
+
+mode_func <- function(vector_1) {
+  all_lvls <- levels(factor(vector_1))
+  mt_list <- list()
+  for (i in 1:length(all_lvls)) {
+    lvl <- all_lvls[i]
+    amount <- length(vector_1[vector_1 == lvl])
+    mt_list[[i]] <- amount
+  }
+  names(mt_list) <- all_lvls
+  max_idx <- which.max(mt_list)
+  true_mode <- all_lvls[max_idx]
+  return(true_mode)
+}
+
+create_colors <- function(input) {
+  col <- c()
+  for (i in input) {
+    if (i == "Fall")
+      colour <- "brown"
+    else if (i == "Winter")
+      colour <- "blue"
+    else if (i == "Spring")
+      colour <- "green"
+    else
+      colour <- "orange"
+    col <- c(col, colour)
+  }
+  return(col)
+}
+
+true_mode <- mode_func(season_extraction$season)
+
+filtered_crime <- group_by(season_extraction, season, year) %>%
+  filter(year < 2021) %>%
+  summarise(count = n(),
+            mode = (levels(factor(season)) == true_mode))
+
+month_crime <- group_by(season_extraction, season, year, month) %>%
+  filter(year < 2021) %>%
+  summarise(count = n())
+
+#changed
+query <-  dbSendQuery(conn = dcon, "
+SELECT DateRptd, VictSex as Sex, VictDescent as Ethnicity, AREANAME as Area
+FROM LA_CrimeData;
+")
+
+
+#same functions
+season_extraction_horiz <- dbFetch(query)
+dbClearResult(query)
+
+season_extraction_horiz <- within(season_extraction_horiz, {
+  year <- extract_year(DateRptd)
+})
+
+season_extraction_horiz <- within(season_extraction_horiz, {
+  month <- extract_mos(DateRptd)
+})
+
+season_extraction_horiz <- within(season_extraction_horiz, {
+  season <- extract_season(month)
+})
+
+changes_up <- function(race){
+  if(race %in% c("K", "C", "L", "J", "D", "V",
+                 "F", "A", "Z")){
+    temp <- as.character("Asian")
+  }
+  
+  else if(race %in% c("X", "-", "O", NULL, "", "NA", NA)){
+    race <- as.character("NULL")
+  }
+  
+  else if(race %in% c("P", "G", "U", "S")){
+    race <- as.character("Pacific Islander")
+  }
+  
+  else if(race %in% c("H")){
+    race <- as.character("Latino")
+  }
+  
+  else if(race %in% c("B")){
+    race <- as.character("Black")
+  }
+  
+  else if(race %in% c("W")){
+    race <- as.character("White")
+  }
+  
+  else if(race %in% c("I")){
+    race <- as.character("American Indian")
+  }
+}
+season_extraction_horiz$Ethnicity <- sapply(season_extraction_horiz$Ethnicity, changes_up)
+filtered_ethnicity <- group_by(season_extraction_horiz, season, year, Sex, Ethnicity) %>%
+  filter(year < 2021, Sex == "M" | Sex == "F") %>%
+  summarise(count = n())
+#added
+filtered_area <- group_by(season_extraction_horiz, season, year, Sex, Ethnicity, Area) %>%
+  filter(year < 2021, Sex == "M" | Sex == "F") %>%
+  summarise(count = n()) %>%
+  arrange(desc(count))
+
+gender_crime <- group_by(season_extraction, season, year, VictSex) %>%
+  filter(year < 2021) %>%
+  summarise(count = n())
+
+area_crime <-group_by(season_extraction_horiz, season, year, Area) %>%
+  filter(year < 2021, Sex == "M" | Sex == "F") %>%
+  summarise(count = n())
+
+
+@
+
+\newpage
+\section{Breakdowns by Gender}
+\subsection{Gender and time}
+<<echo=FALSE,results='hide',eval=TRUE>>=
+query <-  dbSendQuery(conn = dcon, "
+SELECT TIMEOCC, VictSex, DateRptd
+FROM LA_CrimeData;
+")
+time_occurred <- dbFetch(query)
+dbClearResult(query)
+
+# Add a column "Year"
+
+time_occurred <- within(time_occurred, {
+  Year <- extract_year(DateRptd)
+})
+
+time_occurred <- time_occurred %>%
+  filter(Year < 2020)
+
+time_occurred <- time_occurred %>%
+  select(c(1:2, 4))
+
+# Replace "","H","N" and "-" in victim sex with X.
+time_occurred$VictSex[time_occurred$VictSex==""] = "X"
+time_occurred$VictSex[time_occurred$VictSex=="H"] = "X"
+time_occurred$VictSex[time_occurred$VictSex=="N"] = "X"
+time_occurred$VictSex[time_occurred$VictSex=="NA"] = "X"
+time_occurred$VictSex[time_occurred$VictSex=="-"] = "X"
+year_frequency = table(time_occurred$Year)
+
+# Create sex and year df to calculate the frequency of the crime in terms of 
+# gender in different years.
+sex_and_year = data.frame("Year"=time_occurred$Year,"victm_sex" = time_occurred$VictSex)
+# Change table to df.
+DF = as.data.frame.matrix(table(sex_and_year))
+# Change df to matrix.
+sex_and_year_matrix = t(apply(as.matrix.noquote(DF),2,as.numeric))
+colnames(sex_and_year_matrix) = c(2010:2019)
+
+# Plot
+m <- barplot(sex_and_year_matrix, beside=TRUE,col = c("purple","blue","grey"), 
+            density = 40,ylim = c(0,250000),xlab = "Year", ylab="Number of crimes", 
+            main = "Number of crimes and the victim's gender in LA from 2010 to 2019")
+lines(x = m[2,] ,y  = colSums(sex_and_year_matrix),col="red")
+
+legend("topright",
+c("Female","Male","Unknown","Total"),
+fill = c("purple","blue","grey","red"),
+density = c(100,100,100,100),cex = .9, pt.cex = 4)
+grid(nx = NA, ny = NULL, lwd = 0.5, lty = 1, col = "gray")
+@
+
+<<echo=FALSE,results='hide',eval=TRUE>>=
+dev.off()
+@
+
+As seen by this graph, it is noticeable that men comprise of the majority of victims
+between 2010 and 2020 in LA and are followed by women. Reported crime tends to have
+decreased as a whole following the COVID-19 Pandemic in 2020, which is to be expected given
+the circumstances, but even with the aforementioned decrease in crime, men are still the
+majority of the victims. Non-binary and privacy-maintained individuals are subjected to
+the least amount of crimes by gender in LA county, but this can be attributed to their slim
+population in the U.S. as a whole. Some further analysis that we could do is breakdown
+gender and ethnicity by year and view political campaign support in LA county across 2010
+to 2020. A recent focus within politics is the "tough on crime" campaign and if we
+can see the amount of times a political campaign focuses on it, it may describe the 
+interests of the citizens of LA.
+
+When we look at the grouped bar chart, we can see that men are more likely to be victims than
+women from 2010 to 2019. This creates an interesting question pertaining to why? It could be
+that men are more comfortable engaging w/the outside world, placing them at greater risk to 
+items like homicide. It can also be explained if we were to look at the population markup of
+LA County - if there are significantly more men than women, that may explain a bit of the
+difference between instances of perpetrations against women vs. men.
+
+\newpage
+\subsection{Difference of prepetrated crime by gender}
+<<echo=FALSE, results='hide', message=FALSE,eval=TRUE>>=
+# Prepare data
+query <- dbSendQuery(conn = dcon, "
+SELECT CrmCdDesc as Crime_Code, VictSex as Sex, count() as Freq, DateRptd
+FROM LA_CrimeData
+WHERE VictSex = 'F' OR VictSex = 'M'
+GROUP by CrmCdDesc, VictSex
+ORDER by Freq DESC;
+")
+sex_code <- dbFetch(query)
+dbClearResult(query)
+
+sex_code <- within(sex_code, {
+  Year <- extract_year(DateRptd)
+})
+
+sex_code %>%
+  filter(Year < 2021)
+
+f_crm = sex_code %>% filter(Sex == "F")
+f_crm_top10 = ungroup(f_crm) %>% slice_max(Freq, n = 10)
+f_crm_breaks <- f_crm_top10$Crime_Code
+m_crm = sex_code %>% filter(Sex == "M")
+m_crm_top10 = ungroup(m_crm) %>% slice_max(Freq, n = 10)
+m_crm_breaks <- m_crm_top10$Crime_Code
+@
+
+<<echo=FALSE, results='hide', message=FALSE, warning=FALSE,eval=TRUE>>=
+p1 = ggplot(f_crm_top10, aes(x=reorder(Crime_Code, -Freq), y=Freq)) + 
+  geom_bar(stat="identity",fill="steelblue") + 
+  theme(axis.text.x = element_text(size=4, hjust=1),axis.title.x=element_blank(), axis.title.y=element_blank()) +
+   labs(title = "Top 10 Crimes from 2010-2019 (Female Victims vs Male Victims)",subtitle ="Female") +
+  geom_text(aes(label=Freq), vjust=1.6, color="white", size=3.5)
+
+p2 = p1 + scale_x_discrete(breaks=c(f_crm_breaks),
+  label = c('BATTERY - \nSIMPLE ASSAULT','INTIMATE PARTNER - \nSIMPLE ASSAULT','BURGLARY \nFROM VEHICLE',"THEFT PLAIN","THEFT OF \nIDENTITY","BURGLARY","VANDALISM - \nFELONY", "VANDALISM -\n MISDEAMEANOR", "CRIMINAL THREATS - \nNO WEAPON", "THEFT-\nGRAND")
+)
+
+p3 = ggplot(m_crm_top10, aes(x=reorder(Crime_Code, -Freq), y=Freq)) + 
+  geom_bar(stat="identity", fill = "orange") + 
+  theme(axis.text.x = element_text(size=4, hjust=1), axis.title.x=element_blank(), axis.title.y=element_blank()) +
+  labs(subtitle =" Male") +
+  geom_text(aes(label=Freq), vjust=1.6, color="white", size=3.5)
+        
+p4 = p3 + scale_x_discrete(breaks=m_crm_breaks,
+  label = c('BATTERY - \nSIMPLE ASSAULT','BURGLARY \nFROM VEHICLE','BURGLARY',"THEFT PLAIN","ASSAULT WITH \nDEADLY WEAPON","THEFT OF IDENTITY","VANDALISM - \nFELONY", "ROBBERY", "VANDALISM - \nMISDEAMEANOR", "THEFT-\nGRAND")
+)
+
+p2/p4
+@
+
+From the previous exploration, we found that men are more likely to be victims than women
+from 2010 to 2019. To discover some of the reasoning behind said finding, we listed the
+10 most prevalent instances of crime against both females and males.
+
+From the above bar plot, it's noticeable that the majority of crimes suffered by women
+are simple assault, burglary, theft, or threats with no weapon. However, for men, the
+number of crimes is more evenly distributed among different types. Even though the amount 
+of the 2 most-occurring crimes suffered by men is slightly less than women, men are more
+likely to be involved in crimes such as assault with deadly weapons and robbery. In addition,
+the overall frequency of every subsequent crime (i.e., the 3rd most frequent, the 4th most 
+frequent, etc.) is higher for men. Again, this may be due to how comfortable men are with 
+engaging in the outside world, as women encounter threats of stalking, assault, misogyny, etc.
+
+\newpage
+\section{Breakdowns by LA Location}
+\subsection{Frequency by Community}
+<<echo=FALSE, results='hide',warning=FALSE,message=FALSE,eval=TRUE>>=
+query <- dbSendQuery(conn = dcon, "
+SELECT AREA as Area, AREANAME as PD_Name, DateRptd
+FROM LA_CrimeData
+ORDER by AREA;
+")
+Area_Name <- dbFetch(query)
+dbClearResult(query)
+
+Area_Name <- within(Area_Name, {
+  Year <- extract_year(DateRptd)
+})
+
+Area_Name <- Area_Name %>%
+  filter(Year < 2021) %>%
+  select(c(1:2))
+temp_table <- as.data.frame(table(Area_Name))
+
+create_df_table <- function(que) {
+  func_table <- as.data.frame(table(que))
+  remove_vect <- c()
+  for (i in 1:length(func_table$Freq)) {
+    if (func_table$Freq[i] == 0) {
+      remove_vect <- c(remove_vect, i)
+    }
+  }
+  func_table <- func_table[-remove_vect,]
+  func_table <- func_table[order(func_table$Freq, decreasing = TRUE),]
+  return(func_table)
+}
+temp_table <- create_df_table(Area_Name)
+
+par(mar=c(7,4,7,4), lheight = 10)
+barplot(temp_table$Freq, col = "light blue", main = "Frequency of Where Crimes Occur",  xlim = c(0,23), ylim = c(0, 160000), las=2, cex.names = 1, names.arg = temp_table$PD_Name,
+        mgp = c(.3,.8,-.5))
+length(Area_Name$Area[Area_Name$PD_Name == '77th Street'])
+@
+
+Above is a barchart that displays the frequencies of how many reported instances of crimes
+are within each area code in LA County. In short, this displays some areas of interest that 
+can be described as "high areas of crime" in comparison to other areas. For example, 77th 
+street could be further analyzed by measures of socioeconomic status to further analyze some 
+potential reasonings as to why it's a relatively higher area of crime. In fact, using a dataset
+from the LA Almanac, we can create a graph that can showcase if there is a relationship 
+between 1 measure of socioeconomic status - median household income per patrol district. 
+If an inverse correlation exists between frequency of crime and income, it can imply that
+it is a significant predictor of troubled areas and can help governments attempt to combat
+said inequalities to quell crime. 
+
+<<echo=FALSE, results='hide',warning=FALSE,message=FALSE,eval=TRUE>>=
+dev.off()
+@
+
+
+\newpage
+\subsection{Median community income vs. crime occurrence}
+<<echo=FALSE, results='hide',warning=FALSE,message=FALSE,eval=TRUE>>=
+query <- dbSendQuery(conn = dcon, "
+SELECT CrmCdDesc, DateRptd, AREA as Area
+FROM LA_CrimeData
+ORDER BY AREA;
+")
+
+ccd <- dbFetch(query)
+dbClearResult(query)
+crimetype <- ones(length(ccd$CrmCdDesc),m=1)
+ccd <- cbind(ccd,crimetype)
+ccnv <- subset(ccn,ccn$X==2)
+ccd$crimetype[is.element(ccd$CrmCdDesc,ccnv$CrmCdDesc)] <- 2
+ccd$crimetype[ccd$crimetype==1] <- 'nonviolent'
+ccd$crimetype[ccd$crimetype==2] <- 'violent'
+ccd[1,4] <- NA
+
+ccd <- within(ccd, {
+  Year <- extract_year(DateRptd)
+})
+
+query <- dbSendQuery(conn = dcon, "
+SELECT Estimated_Median_Income as Med_Income, Patrol_District as PD_Name, Year, avg(Estimated_Median_Income) as Income_Avg
+FROM Median_Income
+GROUP by Patrol_District, Year;
+")
+Income <- dbFetch(query)
+dbClearResult(query)
+
+query <- dbSendQuery(conn = dcon, "
+SELECT CrmCdDesc, AREA as Area, AREANAME as PD_Name, DateRptd
+FROM LA_CrimeData
+ORDER by AREA;
+")
+Area_Name <- dbFetch(query)
+dbClearResult(query)
+
+
+
+Area_Name <- within(Area_Name, {
+  Year <- extract_year(DateRptd)
+})
+Area_Name <- cbind(Area_Name, ccd$crimetype)
+colnames(Area_Name) <- c("CrmCdDesc","Area","PD_Name","DateRptd","Year","crimetype")
+Area_Name <- Area_Name %>% group_by(PD_Name, `crimetype`, Year) %>%
+  summarise(count = n())
+Area_Name <- Area_Name[-547,]
+colnames(Area_Name) <- c("PD_Name","crimetype","Year","Freq")
+
+plot_the_damn_graph <- function(year) {
+  mymymy <- capture.output(cat(year))
+  Area2015 <- Area_Name %>%
+    filter(Year == year & PD_Name != 'Newton')
+    
+
+  Income2015 <- Income %>%
+    filter(Year == year) %>%
+    select(c(4,2))
+  
+  joined_income_freq <- merge(x=Income2015,y=Area2015,by="PD_Name",all.x=FALSE,
+                              all.y=FALSE)
+  
+      joined_income_freqnv <- merge(x=Income2015,y=subset(Area2015, Area2015$crimetype=='nonviolent'),by='PD_Name',all.x=FALSE,
+                              all.y=FALSE)
+  lmia1 <- joined_income_freqnv[,c(2,5)]
+  colnames(lmia1) <- c('Income_Avg','Freq')
+  bruh1 <- lm(Freq ~ Income_Avg, lmia1)
+  summary(bruh1)
+  
+    joined_income_freqv <- merge(x=Income2015,y=subset(Area2015, Area2015$crimetype=='violent'),by='PD_Name',all.x=FALSE,
+                              all.y=FALSE)
+  lmia2 <- joined_income_freqv[,c(2,5)]
+  colnames(lmia2) <- c('Income_Avg','Freq')
+  bruh2 <- lm(Freq ~ Income_Avg, lmia2)
+  summary(bruh2)
+
+  position1 <- bruh1$coefficients[1]
+  position2 <- bruh2$coefficients[1]
+
+  if (year == 2020) {
+    mymymy <- "Median Household Income vs Frequency of Different Types of Crime per Community - 2020"
+    coeff <- round(bruh1$coefficients[2], 5)
+    ggplot(joined_income_freq, aes(x = Income_Avg, y = Freq, color = PD_Name)) +
+      geom_point(size = 2.6) +
+      geom_smooth(method = 'lm', se = FALSE, aes(group = 1), color = "red", 
+                  size = 1, lty = 2) +
+      labs(x= "Median Household Income", y = "Crime Occurrence", title = mymymy,
+           color = "Community") +
+      xlim(0, 125000) + ylim(0, 1000) +
+      annotate(geom = "text", x = 79000, y = position1 + 15, label = coeff1)
+    +annotate(geom = "text", x = 79000, y = position2 + 15, label = coeff2)
+  }
+   else {
+    coeff1 <- round(bruh1$coefficients[2], 2)
+    coeff2 <- round(bruh2$coefficients[2], 2)
+    c <- ggplot(joined_income_freq, aes(x = Income_Avg, y = Freq,
+                                        shape = crimetype, color = PD_Name)) +
+      geom_point(size = 2.6)  +
+geom_abline(intercept = bruh1$coefficients[1], slope = bruh1$coefficients[2]) +
+      geom_abline(intercept = bruh2$coefficients[1], slope = bruh2$coefficients[2])+
+      labs(x= "Median Household Income", y = "Crime Occurrence", title = mymymy,
+           shape = "Crime Type", color = "Community") +
+      xlim(0, 115000) + ylim(0, 16000) +
+      annotate(geom = "text", x = 65000 , y = position1 - 450, label = coeff1) +
+       annotate(geom = "text", x = 65000 , y = position2 - 1850, label = coeff2)
+  }
+}
+a <- plot_the_damn_graph(2015)
+b <- plot_the_damn_graph(2017)
+ggarrange(a, b, ncol = 2, common.legend = TRUE, legend = "bottom") +
+  plot_annotation("Median Household Income vs Frequency of Different Types of Crime per Community - 2015 vs 2017")
+@
+Following the focus on viewing communities, we wanted to visualize if there was a relationship
+between criminal behavior in certain communities based on how wealthy a community is.
+Since the types of crime prevalent in communities often differ, we created a
+simple linear model to predict the amount of violent and nonviolent crime for a community
+based on the community's median income.
+
+Focusing on the 2015 data, we can see that while there is a very weak correlation \\(Adj Rsquared of 0.011\\)
+between income and nonviolent crime, there is a much stronger negative correlation \\(Adj Rsquared of 0.54\\)
+between income and violent crime. The weak correlation would suggest that the income of a community is not associated with any variations in the frequency of nonviolent crimes. On the other hand, the negative correlation would suggest that the amount of violent crimes decreases as median income increases. Specifically for every additional dollar increase in median income of a community, there are 0.4 less occurrences of violent crimes.
+
+For perspective, the average adult works about 1,801 hours a year. If they received a wage raise
+of 1/hr, they now make an additional 1,801 a year. For that increase, the relationship says
+that their community will experience 72 less instances of violent criminal activity in their community that year. Why would this be? Perhaps communities with greater wealth have access to better
+security, in the form of gated communities, neighborhood watches, and distance from
+lower-income communities.
+
+<<echo=FALSE, results='hide',warning=FALSE,message=FALSE,eval=TRUE>>=
+dev.off()
+@
+
+
+
+\newpage
+\subsection{Businesses in relative low-crime vs high-crime communities}
+From the city of Los Angeles, we obtained a dataset containing the names and locations
+of all operating businesses in LA County. With this dataset, we decided to see the 
+distribution of specific business practices in the lowest-crime community and the 
+highest-crime community community. In particular, we wanted to see if a high-crime
+community would contain more "predatory" practices that facilitate poverty traps - 
+a cycle in which a low-income individual becomes unable to improve their position. 
+In addition, we want to see ifhigh-income communities have greater access to recreational
+services for their personal leisure. Because they have a higher income, it'd enable them
+to take more days off, work less, and enjoy their leisure, and thus, have greater access
+to nearby leisure activities than their low-income counterparts.
+<<echo=FALSE,results='hide',message=FALSE,error=FALSE,warning=FALSE,eval=TRUE>>=
+initExtension(dcon, "regexp")
+query <- dbSendQuery(conn = dcon, "
+SELECT BUSINESSNAME, ZIPCODE
+FROM Businesses
+WHERE ZIPCODE REGEXP '(90003|90037|90047|90043|90062)-[0-9]{4}';
+")
+busi_77th <- dbFetch(query)
+dbClearResult(query)
+busi_77th <- unlist(busi_77th, use.names = FALSE)
+
+query <- dbSendQuery(conn = dcon, "
+SELECT BUSINESSNAME, ZIPCODE
+FROM Businesses
+WHERE ZIPCODE REGEXP '(90032|90042|90033|90023)-[0-9]{4}';
+")
+busi_hollen <- dbFetch(query)
+dbClearResult(query)
+busi_hollen <- unlist(busi_hollen, use.names = FALSE)
+@ 
+
+<<echo=FALSE,results='hide',message=FALSE,error=FALSE,warning=FALSE,eval=TRUE>>=
+health_77 <- grep(busi_77th, pattern = "Health|Clinic|Hospital|Medical|^Dental|Care$|Fitness|Gym", ignore.case = TRUE)
+predatory_77 <- grep(busi_77th, pattern = "Pawn$|Cash.|Money$|^Loan|Pay$|Financing", ignore.case = TRUE)
+education_77 <- grep(busi_77th, pattern = "School|University|Learn|Lesson|Fellowship|Educat|Headstart", ignore.case = TRUE)
+recreation_77 <- grep(busi_77th, pattern = "^Art$|Fitness|Train|Production|Nature|Lounge|Dance|Boxing|Wellness|Cycling|Shooters|Studio|Country Club|Golf|Club|Fishing|^Sport|Entertain|Multi-purpose", ignore.case = TRUE)
+area77 <- c(length(health_77), length(predatory_77), length(education_77),
+            length(recreation_77)) 
+
+
+
+health_holl <- grep(busi_hollen, pattern = "Health|Clinic|Hospital|Medical|^Dental|Care$|Fitness|Gym", ignore.case = TRUE)
+predatory_holl <- grep(busi_hollen, pattern = "Pawn$|Cash.|Money$|^Loan|Pay$|Financing", ignore.case = TRUE)
+education_holl <- grep(busi_hollen, pattern = "School|University|Learn|Lesson|Fellowship|Educat|Headstart", ignore.case = TRUE)
+recreation_holl <- grep(busi_hollen, pattern = "^Art$|Fitness|Train|Production|Nature|Lounge|Dance|Boxing|Wellness|Cycling|Shooters|Studio|Country Club|Golf|Club|Fishing|^Sport|Entertain|Multi-purpose", ignore.case = TRUE)
+areaholl <- c(length(health_holl), length(predatory_holl), length(education_holl),
+              length(recreation_holl))
+
+df <- data.frame(area77, areaholl)
+names(df) <- c("77th Street", "Hollenbeck")
+rownames(df) <- c("Health", "Predatory", "Education", "Recreation")
+@
+
+<<echo=FALSE,message=FALSE,error=FALSE,warning=FALSE, fig.pos="H",eval=TRUE>>=
+df %>%
+  knitr::kable(caption = "Frequency of types of businesses present") %>%
+  kableExtra::kable_styling(latex_options = "hold_position", font_size = 10) %>%
+    kable_classic(full_width = F, html_font = "Cambria")
+@  
+Based on the above table, we can see a few remarkable differences. For starters, 
+77th Street has lower access to Health and Recreational services and greater access
+to Predatory services, as compared to their high-income counterpart, Hollenbeck.
+Surprisingly, they also have greater access to local Educational services, something
+we did not expect. While a simple comparison, it does provide a bit of additional insight
+as to how these communities are treated. 
+
+For example, the table below showcases the first 5 results of Health for both 77th
+Street and Hollenbeck. 
+<<echo=FALSE,message=FALSE,error=FALSE,warning=FALSE, fig.pos="H",eval=TRUE>>=
+df <- data.frame(busi_77th[health_77[1:5]],busi_hollen[health_holl[1:5]])
+names(df) <- c("77th Street", "Hollenbeck")
+df %>%
+  knitr::kable(caption = "First five health results", escape = FALSE) %>%
+  kableExtra::kable_styling(latex_options = "hold_position",
+                            font_size = 7) %>%
+    kable_classic(full_width = F, html_font = "Cambria")
+@  
+As can be seen in the above table, 77th Street has health services, but they're not
+actual clinics or personal health related services; they're foundations, medical 
+supply companies or a health billing group. However, the first five pulled from 
+Hollenback has services towards improving physical health, two health services 
+(one being for animals), a health center, and a medical insurance group. This dataset
+isn't organized in a particular fashion (e.g., alphabetically or by zip code), but 
+rather by the company's registered business code. This may exemplify the availability
+of true health-related services in these areas.
+
+\newpage
+Lastly, the table below showcases the first 8 results of Predatory practices 
+for both 77th Street and Hollenbeck.
+<<echo=FALSE,message=FALSE,error=FALSE,warning=FALSE, fig.pos="H",eval=TRUE>>=
+df <- data.frame(busi_77th[predatory_77[1:8]],busi_hollen[predatory_holl[1:8]])
+names(df) <- c("77th Street", "Hollenbeck")
+df %>%
+  knitr::kable(caption = "First eight predatory-business results", escape = FALSE) %>%
+  kableExtra::kable_styling(latex_options = "hold_position",
+                            font_size = 10) %>%
+    kable_classic(full_width = F, html_font = "Cambria")
+@  
+Through the use of a text filter by searching "cash", "pawn", "check", "loan", and
+similar like terms, the results indicate that 77th Street has a greater availability
+and proportion of predatory services than Hollenbeck. In addition, Hollenbeck's 
+results showcase businesses that facilitate cash flow/management rather than actual
+predatory services. 77th Street has cash advance, checking cashing, ez loans, ez 
+cash, and similar poverty trap style business regimes, unlike Hollenbeck. While small
+and reliant on text filters, this supports the idea that low-income communities are
+exposed to poverty-traps that greatly expands the inequality of their citizens
+as compared to Hollenbeck - a higher income community
+<<echo=FALSE, results='hide', message=FALSE>>=
+query <- dbSendQuery(conn = dcon, "
+SELECT Patrol_District as PD_Name, Zip_Code
+FROM Median_Income
+WHERE Patrol_District REGEXP '(Newton|Rampart|Southwest|Central|77th Street|Hollenbeck)'
+GROUP by Patrol_District, Zip_Code;
+")
+lowest_zips <- dbFetch(query)
+dbClearResult(query)
+
+query <- dbSendQuery(conn = dcon, "
+SELECT Patrol_District as PD_Name, Zip_Code
+FROM Median_Income
+WHERE Patrol_District REGEXP '(Olympic|Northeast|^Hollywood|Van Nuys|North Hollywood|Wilshire|Mission)'
+GROUP by Patrol_District, Zip_Code;
+")
+middle_zips <- dbFetch(query)
+dbClearResult(query)
+
+query <- dbSendQuery(conn = dcon, "
+SELECT Patrol_District as PD_Name, Zip_Code
+FROM Median_Income
+WHERE Patrol_District REGEXP '(Harbor|Foothill|Pacific|West Valley|Devonshire|Topange|West LA)'
+GROUP by Patrol_District, Zip_Code;
+")
+highest_zips <- dbFetch(query)
+dbClearResult(query)
+
+
+# We have the zips
+
+grab_busi <- function(zip_vector) {
+  text <- paste0("SELECT BUSINESSNAME
+                  FROM Businesses
+                  WHERE ZIPCODE REGEXP '(", paste(zip_vector$Zip_Code, collapse = "|"),
+                  ")';
+                  ")
+  query <- dbSendQuery(conn = dcon, text)
+  bruhhh <- dbFetch(query)
+  dbClearResult(query)
+  bruhhh <- unlist(bruhhh, use.names = FALSE)
+  return(bruhhh)
+}                   
+lowIncBusi <- grab_busi(lowest_zips)
+midIncBusi <- grab_busi(middle_zips)
+highIncBusi <- grab_busi(highest_zips)
+
+grab_types <- function(business) {
+  health_77 <- length(grep(business, pattern = "Health|Clinic|Hospital|Medical|^Dental|Care$|Fitness|Gym",
+                           ignore.case = TRUE))
+  predatory_77 <- length(grep(business, pattern = "Pawn$|Cash.|Money$|^Loan|Pay$|Financing",
+                              ignore.case = TRUE))
+  education_77 <- length(grep(business, 
+                              pattern = "School|University|Learn|Lesson|Fellowship|Educat|Headstart",
+                              ignore.case = TRUE))
+  recreation_77 <- length(grep(business, pattern = "^Art$|Fitness|Train|Production|Nature|Lounge|Dance|Boxing|Wellness|Cycling|Shooters|Studio|Country Club|Golf|Club|Fishing|^Sport|Entertain|Multi-purpose", ignore.case = TRUE))
+  area77 <- c(health_77, predatory_77, education_77, recreation_77)
+  return(area77)
+}
+lowinctypes <- grab_types(lowIncBusi)
+midinctypes <- grab_types(midIncBusi)
+highinctypes <- grab_types(highIncBusi)
+@
+
+<<echo=FALSE,message=FALSE,error=FALSE,warning=FALSE, fig.pos="H">>=
+df <- data.frame(lowinctypes,midinctypes,highinctypes)
+names(df) <- c("Low Income Communities", "Mid Income Communities", "High Income Communities")
+rownames(df) <- c("Health", "Predatory", "Education", "Recreation")
+df %>%
+  knitr::kable(caption = "Types of businesses present in low, median, and high-income communities") %>%
+  kableExtra::kable_styling(latex_options = "hold_position", font_size = 10) %>%
+    kable_classic(full_width = F, html_font = "Cambria")
+@
+Lastly, we wanted to determine the frequency of these types of businesses across multiple
+low, median, and high income communities. Given that there are 21 communities, 7 of the lowest
+income communities are in low, and the same logic applies to the remaining categories. 
+Viewing it as a whole, it seems the the lower income communities aren't disparately exposed
+to the aforementioned poverty traps, but they have significantly lower access to recreational
+and health related services compared to median and high income communities. This same
+relationship also seems to apply for education, but maybe not to a significant margin.
+<<echo=FALSE,message=FALSE,error=FALSE,warning=FALSE, fig.pos="H">>=
+#dev.off()
+@
+
+
+\newpage
+\section{Breakdowns by Victim Ethnicity}
+\subsection{Frequency committed against ethnicity}
+<<echo=FALSE,results='hide',message=FALSE,error=FALSE,warning=FALSE,eval=TRUE>>=
+query <- dbSendQuery(conn = dcon, "
+SELECT VictDescent, DateRptd
+FROM LA_CrimeData;
+")
+ethnicities <- dbFetch(query)
+dbClearResult(query)
+ethnicities <- within(ethnicities, {
+  Year <- extract_year(DateRptd)
+})
+
+ethnicities <- ethnicities %>%
+  filter(Year < 2021) %>%
+  filter(VictDescent != "") %>%
+  filter(VictDescent != "-")
+
+eth_factors <- levels(factor(ethnicities$VictDescent))
+ethnicities <- ethnicities$VictDescent
+levels_meaning <- c("Other Asian", "Black", "Chinese", "Cambodian", "Filipino", "Gaumanian", 
+                    "Hispanic/Latin/Mexican", "American Indian", "Japanese", 
+                    "Korean", "Laotian", "Other", "Pacific Islander", "Samoan", "Haiwaiian", 
+                    "Vietnamese", "White", "Unknown", "Asian Indian")
+
+vector_eth <- c()
+for (i in 1:length(eth_factors)) {
+  temp_amt <- length(ethnicities[ethnicities==eth_factors[i]])
+  vector_eth <- c(vector_eth, temp_amt)
+}
+
+
+ethdata.frame <- data.frame(vector_eth, eth_factors, levels_meaning)
+ethdata.frame <- ethdata.frame[order(ethdata.frame$vector_eth, decreasing = TRUE), ]
+
+
+par(mar=c(3, 4, 2, 4), lheight = 10, cex = 1, mgp = c(1.8, 0, -.5), tck = -.005)
+
+xx <- barplot(ethdata.frame$vector_eth, col = "red", 
+        lwd = 2, ylab = "Frequency",
+        xlab = "Ethnicities", xaxt = "n",
+        ylim = c(0, 800000))
+title("Instances of Crime Suffered per Ethnicity", line = 1)
+legend("topright", legend = ethdata.frame$levels_meaning, cex = 0.7, pt.cex = .7, 
+      pch = ethdata.frame$eth_factors)
+text(x = xx, y = ethdata.frame$vector_eth, labels = ethdata.frame$vector_eth, 
+     col = "blue", pos = 3, las = 3 ,cex = .74, srt = 30)
+axis(1, at = xx, labels = ethdata.frame$eth_factors, las = 0, line = .5, 
+    lwd = 0, lwd.ticks = 0, par(cex = .8))
+@
+
+This graph conducts a different view to analyze the victim's ethnicities from the reported crimes. As 
+has been seen in recent times, specific ethnicities are likelier to be victims of crime compared to 
+other ethnicities. For example, minority ethnic groups, like Hispanics, can be targeted at 
+greater rates compared to non-minority ethnic groups, such as Anglo-Americans, as shown in the
+above graph. Sorted in decreasing 
+order, the graph shows which groups face the most targeted attacks among all citizens in LA county.
+
+Given that the U.S. isn't known to be kind to ethnic minorities, it is interesting to specifically 
+see which ethnic groups are targeted more often than others, with Hispanics/Latinos being the most
+targeted. While this graph only shows targeted ethnicities, a more in depth graph could show which
+ethnic groups faces specific criminal deeds. For example, are ethnic minorities more likely to be 
+a victim of violent crime (assault, murder, manslaughter, etc.) than other ethnic groups? In 
+addition, are ethnic minorities more likely to be a victim in communities they're a majority 
+in than other communities?
+
+<<echo=FALSE,results='hide',eval=TRUE>>=
+dev.off()
+@
+
+\newpage
+\subsection{Victim's Ethnicity Evaluated by Time and Area}
+Below is a plot of the times each of the crimes occurred based on the area they were
+committed in. The color represents the descent of the victim and the columns represent
+crimes in an area, and the height of a point of crime is when it occurred in local military
+time. Any variation in the x direction within a column does not represent anything and is
+simply for clarity in the density of crimes.
+
+Around the 5:00 am mark, the graph gets lighter, indicating that across all areas, there is
+less crime in the early morning. It is clear that each area has a race that has the most victims.
+For example, 77th Street and Southeast both are majority green, meaning that the victims in
+those areas are predominately African-American. The density of the bars represents how
+often crime occurs in the areas relative to other areas.
+
+What is striking about this graph is that many of the areas have a single descent that has the
+most crime committed against. This can be seen in the columns that have a single color dominating.
+The areas that appear more brown, like Wilshire, have a mix of races that crimes are being
+committed against. In each of the areas, time seems to have no affect on what the victim descent
+is for each crime.
+
+Another feature that can be seen is when the crimes are reported. Each hour
+has a large band at the start of the hour, meaning many crimes are reported to have occurred at
+the hour. There is also a lighter band at the 30 minute mark and, in addition, there's also
+a dark band visible at 12:00 pm, perhaps as a generic time of a reported crime occurring. 
+
+<<echo=FALSE,results='hide', plotsetup,eval=TRUE>>=
+query <- dbSendQuery(conn = dcon, "
+SELECT VictDescent, AREANAME as PD_Name, TIMEOCC as Time, DateRptd
+FROM LA_CrimeData;
+")
+eth_timearea <- dbFetch(query)
+dbClearResult(query)
+
+eth_timearea <- within(eth_timearea, {
+  Year <- extract_year(DateRptd)
+})
+
+eth_timearea %>%
+  filter(Year < 2021)
+
+changes <- function(race){
+  if(race %in% c("K", "C", "L", "J", "D", "V",
+                 "F", "A", "Z")){
+    temp <- as.character("Asian")
+  }
+    
+  else if(race %in% c("X", "-", "O", NULL)){
+    race <- as.character("Unknown")
+  }
+  else if(race %in% c("", "NA")){
+    race <-as.character("No Victim Recorded")
+  }
+  else if(race %in% c("P", "G", "U", "S")){
+    race <- as.character("Pacific Islander")
+  }
+  
+    else if(race %in% c("H")){
+      race <- as.character("Latino")
+    }
+    
+    else if(race %in% c("B")){
+      race <- as.character("Black")
+    }
+    
+    else if(race %in% c("W")){
+      race <- as.character("White")
+    }
+    
+    else if(race %in% c("I")){
+      race <- as.character("American Indian")
+    }
+}
+temp <- eth_timearea[sample(nrow(eth_timearea), 420000), ]
+new <- sapply(temp$VictDescent, changes)
+new[sapply(new, is.null)] <- "Unknown"
+new[sapply(new, is.na)] <- "No Recorded Victim"
+new <- unlist(new, use.names = FALSE)
+temp$new <- new
+@
+
+<<r plot ,echo=FALSE,eval=TRUE>>=
+ggplot(data = temp, aes(x = PD_Name, y = Time, color = new, size = I(0.45), alpha = I(1/10))) + 
+  geom_jitter() + labs(title = "Time of Crimes in each Area with Victim Race as Color", color = "Victim Descent", x = "Area Name", y = "Time of Crime") + 
+  theme(axis.text.x = element_text(angle = 90))
+
+@
+
+<<echo=FALSE,results='hide',eval=TRUE>>=
+dev.off()
+@
+
+\newpage
+\subsection{Proportion of area of reported crime by ethnicity}
+<<echo=FALSE, results='hide', message=FALSE,eval=TRUE>>=
+query <- dbSendQuery(conn = dcon, "
+SELECT VictDescent, AREANAME as PD_Name, DateRptd
+FROM LA_CrimeData;
+")
+new_crime <- dbFetch(query)
+dbClearResult(query)
+
+new_crime <- within(new_crime, {
+  Year <- extract_year(DateRptd)
+})
+
+new_crime <- new_crime %>%
+  filter(Year < 2021)
+
+new_crime$VictDescent <- sapply(new_crime$VictDescent, changes)
+
+new_crime %>%
+  group_by(VictDescent, PD_Name) %>%
+    summarize(ex = n()) ->
+  counts
+counts$VictDescent <- as.character(trimws(counts$VictDescent))
+@
+Below is a bar chart based on the proportion of where crimes against victim descents occurred.
+The proportion is based on the number of crimes committed in an area to a particular victim descent,
+and the total number of crimes against the same descent. The larger the box in the column the
+greater the proportion of crimes committed against that race was in that L.A. area. Different
+colors represent different L.A. areas. 
+<<echo=FALSE, results='hide', message=FALSE,eval=TRUE>>=
+ggplot(data = counts, aes(x = VictDescent, y = ex, fill = PD_Name, color = I("black"))) +
+  geom_col(position = "fill") +
+  theme(axis.text.x = element_text(angle = 25, hjust = 0.95)) +
+  labs(title = "Proportion of Where Crimes were committed for each Victim Descent",
+       x = "Victim Descent",
+       y = "Proportion of Crimes",
+       fill = "Area Name")
+@
+
+Many of the victim descents have boxes that take up a larger proportion. This means that
+given a specific descent, more crimes against that group occur in these areas. For example,
+American Indians experience more crime in the Southwest area. Asians have their highest area
+as Olympic. African-Americans have 3 areas that make up a large portion: 77th Street, Southwest, and Southeast.
+The rest of the descents have no area that holds a higher proportion of crimes, despite some having
+more overall crimes committed against them.
+
+
+\newpage
+\section{Breakdown by time}
+\subsection{Logitudinal breakdown by year and season}
+<<echo=FALSE, results='hide', message=FALSE, eval=TRUE, warning=FALSE>>=
+ex <- create_colors(filtered_crime$season)
+breaks <- c("2010", "2014", "2016", "2018", "2021")
+
+ggplot(data = filtered_crime, aes(x = year, y = count)) +
+  facet_grid( ~ season) +
+  geom_line(col = ex, lwd = 1) +
+  labs(x = "Year", y = "Frequency", title = "Frequency of Crime by Season and Year") +
+  theme(axis.text.x = element_text(angle = 45, size = 8), strip.text.x = element_text(size = 16)) +
+  geom_vline(xintercept = 2019.75, col = c("brown", "green", "orange", "blue"), lty = 2,
+             lwd = .75) +
+  annotate("point", x = 2019.75, y = 10000, colour = "black", size = 2) +
+  annotate("text", x = 2016, y = 10000, colour = "black", label = "COVID-19
+        Begins", vjust = 1, size = 3.7) +
+  scale_x_continuous(n.breaks = 4)
+@
+As seen by this graph, there is a noticeable decline in frequency between "Summer" and "Winter"
+across all year, barring 2020+ due to a world-wide anomaly - The COVID-19 Pandemic. Compared to
+"Fall" and "Spring", "Summer" still seems to hold a greater margin in terms of reported crime
+frequency, but not to the same extent as it does when compared to "Winter". But why? Isn't "Summer"
+hotter than all other seasons?
+
+Yes, it is, but this may be attributed to the fact that LA County is in South California, a notably
+hot region, as compared to a midwestern or nothern area (e.g., Salt Lake City). Given this, it
+may cause a reduced effect if the area is essentially hot year-long, but data showing daily temperatures during this time could help explain this.
+
+<<echo=FALSE,message=FALSE,error=FALSE,warning=FALSE, fig.pos="H">>=
+#updated changes
+query <-  dbSendQuery(conn = dcon, "
+SELECT DateRptd, VictSex as Sex, VictDescent as Ethnicity
+FROM LA_CrimeData;
+")
+
+
+#same functions
+season_extraction_horiz <- dbFetch(query)
+dbClearResult(query)
+
+season_extraction_horiz <- within(season_extraction_horiz, {
+  year <- extract_year(DateRptd)
+})
+
+season_extraction_horiz <- within(season_extraction_horiz, {
+  month <- extract_mos(DateRptd)
+})
+
+season_extraction_horiz <- within(season_extraction_horiz, {
+  season <- extract_season(month)
+})
+
+changes_up <- function(race){
+  if(race %in% c("K", "C", "L", "J", "D", "V",
+                 "F", "A", "Z")){
+    temp <- as.character("Asian")
+  }
+  
+  else if(race %in% c("X", "-", "O", NULL, "", "NA", NA)){
+    race <- as.character("NULL")
+  }
+  
+  else if(race %in% c("P", "G", "U", "S")){
+    race <- as.character("Pacific Islander")
+  }
+  
+  else if(race %in% c("H")){
+    race <- as.character("Latino")
+  }
+  
+  else if(race %in% c("B")){
+    race <- as.character("Black")
+  }
+  
+  else if(race %in% c("W")){
+    race <- as.character("White")
+  }
+  
+  else if(race %in% c("I")){
+    race <- as.character("American Indian")
+  }
+}
+season_extraction_horiz$Ethnicity <- sapply(season_extraction_horiz$Ethnicity, changes_up)
+filtered_ethnicity <- group_by(season_extraction_horiz, season, year, Sex, Ethnicity) %>%
+  filter(year < 2021, Sex == "M" | Sex == "F") %>%
+  summarise(count = n())
+
+gender_crime <- group_by(season_extraction, season, year, VictSex) %>%
+  filter(year < 2021) %>%
+  summarise(count = n())
+@
+
+
+\newpage
+\section{Killer Plot}
+<<echo=FALSE,message=FALSE,error=FALSE,warning=FALSE>>=
+# organize month_crime
+plot_da_grid <- function(year_val, show_income, show_ethnicity, show_community) {
+  # Data organization
+  season_vector <- c("Winter", "Spring", "Summer", "Fall") # For ethnicity bars
+  
+  temp_tibble <- filter(month_crime, year == year_val) %>%
+    arrange(month) # For Scatterplot
+  
+  temp_ethnicity <- filtered_ethnicity %>%
+    filter(year == year_val) 
+  
+  month <- temp_tibble$month
+  freq <- temp_tibble$count
+  df <- data.frame(month, freq)
+  df <- df[c(12, 1:11),]
+  df$month <- c(1:12)
+  max_freq <- max(freq)
+  
+  months <- c("Dec","Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul",
+              "Aug", "Sep", "Oct", "Nov")
+  grid.newpage()
+  main_vp <- plotViewport(margins = c(4.5,4.5,3,8),
+                     xscale = c(0, 12.3), yscale = c(0, max_freq + 500))
+  pushViewport(main_vp)
+  
+  # Establishes the base grid graph
+  
+  grid.rect(gp = gpar(col = "grey"))
+  grid.xaxis(df$month, label = months, gp = gpar(tck = 1))
+  grid.yaxis()
+   
+  # Axes, Titles, and Bars being labeled
+  
+  # Axes text and ablines
+  grid.text("Winter", x = .1, y = -.1, default.units = "npc", gp = gpar(col = "blue"))
+  grid.text("Spring", x = .35, y = -.1, default.units = "npc", gp = gpar(col = "darkgreen"))
+  grid.text("Summer", x = .60, y = -.1, default.units = "npc", gp = gpar(col = "darkorange"))
+  grid.text("Fall", x = .85, y = -.1, default.units = "npc", gp = gpar(col = "brown"))
+  grid.text("Frequency", x = -.17, y = .5, default.units = "npc", rot = 90, gp = gpar(cex = 1.2))
+  
+  grid.lines(x = c(3, 3), y = c(0, max_freq + 500), default.units = "native",
+                 draw = TRUE, gp = gpar(col = "blue", lwd = 3.2, lty = 2))
+  grid.lines(x = c(6, 6), y = c(0, max_freq + 500), default.units = "native",
+                 draw = TRUE, gp = gpar(col = "darkgreen", lwd = 3.2, lty = 2))
+  grid.lines(x = c(9, 9), y = c(0, max_freq + 500), default.units = "native",
+                 draw = TRUE, gp = gpar(col = "darkorange", lwd = 3.2, lty = 2))
+  grid.lines(x = c(12, 12), y = c(0, max_freq + 500), default.units = "native",
+                 draw = TRUE, gp = gpar(col = "brown", lwd = 3.2, lty = 2))
+  
+  ##### Add grid.text() for the lowest and highest-crime-frequency communities here 
+  season_list = c("Winter", "Spring", "Summer","Fall")
+  area_crime_current_year = area_crime %>% filter(year == year_val)
+  result = c()
+  for (i in 1:4) {
+    
+    highest_frequency <-  area_crime_current_year %>% filter(season==season_list[i]) %>% slice_max(count,n = 1)
+    lowest_frequency <-  area_crime_current_year %>% filter(season==season_list[i]) %>% slice_min(count,n = 1)
+ 
+    highest_frequency_community = toString(highest_frequency$Area)
+    lowest_frequency_community  = toString(lowest_frequency$Area)
+    result = append(result, highest_frequency_community)
+    result = append(result, lowest_frequency_community)
+  }
+
+  # prints lowest_frequency and highest_frequency community
+  if (show_community) {
+    grid.text(result[1], x = .05, y = .6, default.units = "npc", gp = gpar(col = "blue", fontsize = 12),
+              rot = 90)
+    grid.text(result[2], x = .05, y = .1, default.units = "npc", gp = gpar(col = "red", fontsize = 12),
+              rot = 90)
+    grid.text(result[3], x = .30, y = .6, default.units = "npc", gp = gpar(col = "blue", fontsize = 12),
+              rot = 90)
+    grid.text(result[4], x = .30, y = .1, default.units = "npc", gp = gpar(col = "red", fontsize = 12),
+              rot = 90)
+    grid.text(result[5], x = .54, y = .6, default.units = "npc", gp = gpar(col = "blue", fontsize = 12),
+              rot = 90)
+    grid.text(result[6], x = .54, y = .1, default.units = "npc", gp = gpar(col = "red", fontsize = 12),
+              rot = 90)
+    grid.text(result[7], x = .79, y = .6, default.units = "npc", gp = gpar(col = "blue", fontsize = 12),
+              rot = 90)
+    grid.text(result[8], x = .79, y = .1, default.units = "npc", gp = gpar(col = "red", fontsize = 12),
+              rot = 90)
+  }
+  
+# Legend category text
+  grid.text("Gender", x = 1.1, y = .98, default.units = "npc", draw = TRUE,
+            gp = gpar(col = "black"))
+  if (show_ethnicity)
+    grid.text("Ethnicity", x = 1.1, y = .79, default.units = "npc", draw = TRUE, gp = gpar(col = "black"))
+  ##### Do the same for Income and Ethnicity
+  
+  # Gender bars
+  # Plots gender bars first so seasonal lines aren't obscured
+  
+  genderbar <- function(Year){
+    filtered_crime_year <- subset(gender_crime, gender_crime$year==Year)
+    filtered_crime_year <- filtered_crime_year %>%
+      filter(VictSex == "F" | VictSex == "M") %>%
+      arrange()
+    barData <- matrix(c(filtered_crime_year$count[1],filtered_crime_year$count[2],
+                       filtered_crime_year$count[3],filtered_crime_year$count[4],
+                       filtered_crime_year$count[5],filtered_crime_year$count[6],
+                       filtered_crime_year$count[7],filtered_crime_year$count[8]) , ncol = 4)
+    barData
+  }
+  
+  # ^^ filters dataframe for gender
+  
+  barData <- genderbar(year_val)
+  #4 by 4 matrix of data
+  
+  (boxColors <- c("pink", "cadetblue2"))
+  ## as parameters
+  
+  bp <- function(barData, boxColors) {
+    nmeasures <- nrow(barData)
+    nbars <- ncol(barData)
+    barTotals <- rbind(rep(0, nbars),
+                       apply(barData, 2, cumsum)) / 2.9
+    coords_gender <- c(2, 5, 8, 11)
+    for (i in 1:nbars) {
+      xcoord <- coords_gender[i]
+      grid.rect(x = xcoord,
+                y = barTotals[1:nmeasures,i],
+                height = diff(barTotals[,i]),
+                width = 2, just = "bottom",
+                gp = gpar(fill = boxColors),
+                default.units = "native")
+    }
+  }
+  bp(barData, boxColors)
+  popViewport()
+  
+  # Now we plot seasonal/monthly frequency lines
+  
+  pushViewport(main_vp)
+  grid.points(x = df$month, y = df$freq, gp = gpar(col = "black", lwd = 1.2))
+  for (i in 1:length(df$month)) {
+    if (i > 1) {
+      x0 = df$month[i-1]
+      x1 = df$month[i]
+      y0 = df$freq[i-1]
+      y1 = df$freq[i]
+      xcoords <- c(x0, x1)
+      ycoords <- c(y0, y1)
+      grid.lines(x = xcoords, y = ycoords, default.units = "native",
+                 draw = TRUE, gp = gpar(col = "black", lwd = 1.45))
+    }
+  }
+  
+  # Adding seasonal average
+  # organizing
+  season_tibble <- filter(filtered_crime, year == 2010) %>%
+    group_by(season)
+  season <- temp_tibble$season
+  freq <- temp_tibble$count
+  df <- data.frame(season, freq)
+  df <- df[c(12, 1:11),]
+  rownames(df) <- c(1:12)
+  
+  # need to arrange it now
+  order <- c("Winter", "Spring", "Summer", "Fall")
+  df <- df %>%
+    group_by(season) %>%
+    summarize(mean = mean(freq)) %>%
+    slice(match(order, season))
+  df$season_pos = c(1.5,4.5,7.5,10.5)
+  grid.points(x = df$season_pos, y = df$mean, gp = gpar(col = "red", lwd = 1.5), pch = 18)
+  
+  
+  
+  for (i in 1:length(df$season)) {
+    if (i > 1) {
+      x0 = df$season_pos[i-1]
+      x1 = df$season_pos[i]
+      y0 = df$mean[i-1]
+      y1 = df$mean[i]
+      xcoords <- c(x0, x1)
+      ycoords <- c(y0, y1)
+      grid.lines(x = xcoords, y = ycoords, default.units = "native",
+                 draw = TRUE, gp = gpar(col = "red", lwd = 2.5, lty = 3))
+    }
+  }
+  popViewport()
+  
+  #plot horizontal ethnicity bars
+  #added
+  query <- dbSendQuery(conn = dcon, "
+  SELECT Estimated_Median_Income as Med_Income, Patrol_District as PD_Name, Year,   avg(Estimated_Median_Income) as Income_Avg
+  FROM Median_Income
+  GROUP by Patrol_District;
+  ")
+  Income <- dbFetch(query)
+  dbClearResult(query)
+
+  Income %>% 
+    arrange(Income_Avg) %>%
+    select(Income_Avg, PD_Name) -> YearIncome
+
+  high <- YearIncome[14:20, 2]
+  mid <- YearIncome[8:13, 2]
+  low <- YearIncome[1:7, 2]
+  
+  eths <- levels(as.factor(temp_ethnicity$Ethnicity))
+  
+  ethnicity <- function(dataset, Year, Season, sex){
+    # Get coordinates
+    x_graph_coords <- c(.082, 0.327, .570, .815)
+    xidx <- which(season_vector == Season)
+    x_coord <- x_graph_coords[xidx]
+    y_factor <- rep(0, 7)
+    if (sex == "M")
+      y_factor <- rep(.415, 7)
+    
+    
+    graph_filtered <- temp_ethnicity %>%
+      filter(year == Year, Sex == sex, season == Season)
+  
+    color = ifelse(sex == "M", "blue", "pink")
+    vp <- viewport(x = 1, y = 1, default.units = "native",
+                   width = 1, height = 3)
+    plotViewport()
+  
+    max_y <- max(graph_filtered$count[graph_filtered$year == Year])
+  
+    x <- graph_filtered$Ethnicity
+    y <- graph_filtered$count
+  
+    #colors for horizontal bars
+    
+    eth_color = c("red", "white", "yellow", "purple", "green", "orange", "grey")
+    women_y_vals <- c(.025, .075, .125, .175, .225, .275, .325) + y_factor
+    for(i in 1:7) {
+      y_val <- women_y_vals[i]
+      iterated_vp <- viewport(x = x_coord, 
+                              y = y_val, just = c("bottom"), 
+                              width = (.4 / length(x)),
+                              height = (y[i] / max_y) / 8.4,
+                              angle = -90)
+      pushViewport(iterated_vp)
+      grid.rect(gp = gpar(col = eth_color[i], fill = eth_color[i]))
+      popViewport()
+      
+      #added
+      if(show_income){
+        eth <- eths[i]
+        query <- dbSendQuery(conn = dcon, paste0("SELECT Area, count 
+from areaCounts
+where year == ", year_val, " and Sex == \"", sex, "\" and season == \"", Season, "\" and Ethnicity == \"", eth, "\" LIMIT 1"))
+        
+        relevant <- dbFetch(query)
+        dbClearResult(query)
+        area <- relevant$Area[1]
+        letter <- ifelse(area %in% high, "H", ifelse(area %in% mid, "M", "L"))
+      
+        grid.text(letter, x = x_coord + 0.13, y = y_val)
+      }
+    }
+  }
+  
+  #colors
+
+  # labels
+  pushViewport(main_vp)
+  levels(as.factor(temp_ethnicity$Ethnicity))
+  
+  if (show_ethnicity){
+    for(season in c("Spring", "Summer", "Fall", "Winter")){
+      for(sex in c("M", "F")){
+        ethnicity(temp_ethnicity, year_val, season, sex)
+      }
+    }
+  }
+  #popViewport()
+  # ^ allows to exit main_vp and finally plot legend vp
+  
+  gendlegend_vp <- viewport(x = 14, y = (max_freq - 1500), default.units = "native",
+                    width = .5, height = 3000,
+                    xscale = c(13.3, 14), yscale = c(0, 1000))
+  pushViewport(gendlegend_vp)
+  
+  # Gender legend
+  grid.legend(labels = c("Men", "Women"), ncol = 1, hgap = 1, vgap = unit(.65, "lines"),
+              default.units = "native", draw = TRUE, pch = 16,
+              gp = gpar(col = c("cyan", "pink","red")))
+  popViewport()
+  
+  if (show_ethnicity) {
+    # Ethnicity legend
+    ethlegend_vp <- viewport(x = 15, y = (max_freq - 8550), default.units = "native",
+                      width = .5, height = 3000,
+                      xscale = c(13.3, 14), yscale = c(0, 1000))
+    pushViewport(ethlegend_vp)
+    grid.legend(labels = levels(as.factor(temp_ethnicity$Ethnicity)),
+                ncol = 1, hgap = 1, vgap = unit(.65, "lines"), default.units = "native", draw = TRUE, pch = 17,
+                gp = gpar(col = c("red", "white", "yellow", "purple", "green", "orange", "grey")))
+  }
+}
+plot_da_grid(2018, TRUE, TRUE, TRUE)
+@
+The above killer plot showcases multiple variables that we think are crucial to understanding
+the relationship and overall trends of crime within LA county. For starters, the circular
+points represent the frequency of crime per month in a set year. The red triangles represent
+the average crime frequency per the season, in order to show the overall trends over the years. Using
+this information, all years showcase the lowest crime frequency during the winter season.  
+
+In addition, the bar graphs showcase the stacked proportion of crime-victims' gender. 
+Moreover, the horizontal bars highlight the impacted proportion of each gender's ethnicity.
+What this mean can be clearly show by viewing the gender difference for African Americans
+(Black). Of all women, black women were victims of a crime at a significantly higher 
+proportion than black men from all men. This relationship is consistent for every year,
+but for simplicity, this report will only include the year of 2018. 
+
+Lastly, we decided to add the communities with the lowest and highest frequency 
+(where lowest frequency communities are at the bottom and vice versa at the top). 
+We also added the income level of specific ethnicites, but none of the of the visual information
+seems to be consistent.
+
+\newpage
+\section{Conclusion}
+Overall, we visualized specific variables in hopes to emphasize specific relationships between them
+and the frequency of crime. Although specific portions of our analysis were cut short due to
+the unavailability of specific data (such as ethnic distribution without each LA community, the 
+number of active police officers per community, and median household income for all years), we were 
+able to find information that can help answer these concerns of crime. 
+
+The availability of resources in these communities is incredibly significant with low-income communities
+having 5x less the number of recreational services. By restricting leisure time, lower income 
+individuals pent up stress and may retaliate. Additionally, the relationship between average median community 
+income and violent crime frequency is quite descriptive. Following the previous logic for 
+resource availability, a low income in a high-cost-of-living area severely limits any kind stress
+relief, and can also lead to retaliation. 
+
+Of course, our visual analysis needs further support with a more detailed sample. Additionally, while
+these issues can be solved by increasing the number of resources and financial assistance 
+to these low-income areas, California has one of the best socio-economic safety nets in the nation. 
+Future work should analyze the impact of the suggested solutions on crime frequency. 
+
+Lastly, future work should focus on the impact of correctional services on criminal offenders. 
+While our dataset maintains the confidentiality of the victims and perpetrators, once the 
+offenders are caught, it's unknown to us if they offend again in future or not. Because
+of the recent focus on jailing reform in the U.S., an analysis focusing on the repeat offenders
+or offenders who reintegrate into upstanding citizens should be conducted to determine
+specific factors that contribute to people committing crimes. 
+
+
+
+
+\end{document}
